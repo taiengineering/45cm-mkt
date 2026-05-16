@@ -1,0 +1,1 @@
+{"name":"@45cm/channel-naver-kin","version":"0.1.0","private":true,"main":"dist/index.js","scripts":{"build":"tsc"},"dependencies":{"@45cm/core-shared-types":"workspace:*"},"devDependencies":{"typescript":"^5.4.0","@types/node":"^20.0.0"}}

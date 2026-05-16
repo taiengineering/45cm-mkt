@@ -1,0 +1,1 @@
+export function evaluatePolicy(_ws:string,_cap:string) { return {allowed:true,requiresApproval:true}; }
