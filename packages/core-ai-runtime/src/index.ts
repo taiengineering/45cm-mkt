@@ -2,17 +2,18 @@ import OpenAI from 'openai';
 import { v4 as uuid } from 'uuid';
 import type { AiGenerateRequest, AiGenerateResult } from '@45cm/core-shared-types';
 
-// === Config ===
 const MODELS: Record<string,string> = { 'marketing.generate_draft':'gpt-4o-mini', 'marketing.rewrite_humanize':'gpt-4o-mini', 'marketing.classify_intent':'gpt-4o-mini' };
 const COST: Record<string,{i:number;o:number}> = { 'gpt-4o-mini':{i:0.00015,o:0.0006} };
 const TIMEOUT_MS = 30_000;
 
-// === Client ===
+let sdkVersion = 'unknown';
+try { sdkVersion = require('openai/package.json').version; } catch(_) {}
+
 let client: OpenAI|null = null;
 function oai(): OpenAI {
   if (!client) {
     const key = process.env.OPENAI_API_KEY;
-    console.log(JSON.stringify({ level:'info', msg:'openai.client.init', key_exists:!!key, key_prefix:key?.slice(0,12), sdk_version:OpenAI.VERSION ?? 'unknown' }));
+    console.log(JSON.stringify({ level:'info', msg:'openai.client.init', key_exists:!!key, key_prefix:key?.slice(0,12), sdk_version:sdkVersion }));
     client = new OpenAI({ apiKey: key, timeout: TIMEOUT_MS, maxRetries: 0 });
   }
   return client;
@@ -30,7 +31,6 @@ export async function aiGenerate(req: AiGenerateRequest): Promise<AiGenerateResu
   const traceId = (req as any).traceId ?? (req.context as any)?.trace_id ?? uuid();
   const start = Date.now();
 
-  // --- Step 1: Request Start Log ---
   console.log(JSON.stringify({
     level:'info', msg:'openai.request.start',
     trace_id: traceId, workspace_id: req.workspaceId,
@@ -38,7 +38,6 @@ export async function aiGenerate(req: AiGenerateRequest): Promise<AiGenerateResu
     input_length: req.input.length, timeout_ms: TIMEOUT_MS,
   }));
 
-  // --- Step 2: AbortController Timeout ---
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -60,7 +59,6 @@ export async function aiGenerate(req: AiGenerateRequest): Promise<AiGenerateResu
     const ct = r.usage?.completion_tokens ?? 0;
     const cost = Math.round(((pt / 1000) * rates.i + (ct / 1000) * rates.o) * 1e6) / 1e6;
 
-    // --- Step 1: Request Success Log ---
     console.log(JSON.stringify({
       level:'info', msg:'openai.request.success',
       trace_id: traceId, provider:'openai', model: r.model,
@@ -78,30 +76,25 @@ export async function aiGenerate(req: AiGenerateRequest): Promise<AiGenerateResu
     const isTimeout = err.name === 'AbortError' || err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED' || err.message?.includes('abort');
     const status: AiStatus = isTimeout ? 'timeout' : 'failed';
 
-    // --- Step 1: Request Failed Log ---
     console.error(JSON.stringify({
       level:'error', msg:'openai.request.failed',
       trace_id: traceId, provider:'openai', model,
       latency_ms: ms, status,
       error_name: err.name, error_message: err.message,
       error_status: err.status, error_code: err.code,
-      error_type: err.type, error_stack: err.stack?.split('\n').slice(0, 5).join(' | '),
+      error_type: err.type,
     }));
 
-    // Re-throw with status attached
     const wrapped = new Error(`OpenAI ${status}: ${err.message}`);
     (wrapped as any).status = status;
-    (wrapped as any).originalError = err;
     throw wrapped;
   } finally {
     clearTimeout(timer);
   }
 }
 
-// --- Step 8: Minimal test function (no queue, no DB) ---
 export async function debugOpenAI(): Promise<{ ok: boolean; model?: string; latency_ms?: number; error?: string; status: AiStatus; sdk_version: string }> {
   const start = Date.now();
-  const sdk_version = OpenAI.VERSION ?? 'unknown';
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15_000);
 
@@ -110,10 +103,10 @@ export async function debugOpenAI(): Promise<{ ok: boolean; model?: string; late
       { model: 'gpt-4o-mini', max_tokens: 5, messages: [{ role: 'user', content: 'ping' }] },
       { signal: controller.signal },
     );
-    return { ok: true, model: r.model, latency_ms: Date.now() - start, status: 'success', sdk_version };
+    return { ok: true, model: r.model, latency_ms: Date.now() - start, status: 'success', sdk_version: sdkVersion };
   } catch (err: any) {
     const isTimeout = err.name === 'AbortError' || err.message?.includes('abort');
-    return { ok: false, error: err.message, latency_ms: Date.now() - start, status: isTimeout ? 'timeout' : 'failed', sdk_version };
+    return { ok: false, error: err.message, latency_ms: Date.now() - start, status: isTimeout ? 'timeout' : 'failed', sdk_version: sdkVersion };
   } finally {
     clearTimeout(timer);
   }
