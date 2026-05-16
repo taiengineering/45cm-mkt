@@ -1,0 +1,9 @@
+{
+  "name": "45cm-mkt",
+  "private": true,
+  "scripts": {
+    "build": "pnpm --filter @45cm/marketing-api... --filter @45cm/marketing-worker... build",
+    "start": "node start-mkt.js"
+  },
+  "engines": { "node": ">=18" }
+}
