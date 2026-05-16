@@ -1,22 +1,16 @@
 import Fastify from 'fastify';
 import { v4 as uuid } from 'uuid';
-import { enqueue, MARKETING_QUEUES } from '@45cm/core-queue-runtime';
+import { enqueue, MARKETING_QUEUES, debugRedis } from '@45cm/core-queue-runtime';
 import { aiGenerate, debugOpenAI } from '@45cm/core-ai-runtime';
 import { insertDraft, updateDraft, getDraftById, insertApprovalRequest, updateApprovalStatus, insertContent, insertAnalyticsEvent, insertLead, insertUsageLog } from '@45cm/core-db-runtime';
 import { collect } from '@45cm/channel-naver-kin';
 
 const app = Fastify({ logger: true });
 
-// ====== Health ======
 app.get('/health', async () => ({ status:'healthy', engine:'marketing-engine', v:'0.1.0', ts:new Date().toISOString() }));
+app.get('/debug/openai', async (_req, reply) => reply.send(await debugOpenAI()));
+app.get('/debug/redis', async (_req, reply) => reply.send(await debugRedis()));
 
-// ====== Step 8: Debug OpenAI (no queue, no DB) ======
-app.get('/debug/openai', async (_req, reply) => {
-  const result = await debugOpenAI();
-  return reply.send(result);
-});
-
-// ====== Draft Generate ======
 app.post<{Body:{workspaceId:string;input:string;contentId?:string}}>('/draft/generate', async (req, reply) => {
   const {workspaceId,input,contentId}=req.body;
   if(!workspaceId||!input) return reply.status(400).send({error:'workspaceId and input required'});
@@ -27,23 +21,27 @@ app.post<{Body:{workspaceId:string;input:string;contentId?:string}}>('/draft/gen
     ai = await aiGenerate({workspaceId,engine:'marketing',capability:'marketing.generate_draft',input,context:{trace_id:traceId}});
   } catch(err:any) {
     const status = err.status ?? 'failed';
-    // Step 5: save failed draft
     try {
       const draft = await insertDraft({workspace_id:workspaceId,source_content_id:contentId,draft_type:'reply',body:'',status,metadata:{trace_id:traceId,error:err.message}});
-      await insertUsageLog({workspace_id:workspaceId,engine:'marketing',capability:'marketing.generate_draft',provider:'openai',model:'gpt-4o-mini',prompt_tokens:0,completion_tokens:0,estimated_cost_usd:0,latency_ms:0,status,trace_id:traceId});
-      return reply.status(502).send({error:`OpenAI ${status}`,message:err.message,draft_id:draft.id,trace_id:traceId});
-    } catch(dbErr:any) {
-      return reply.status(502).send({error:`OpenAI ${status}`,message:err.message,trace_id:traceId});
-    }
+      return reply.status(502).send({error:'OpenAI '+status,message:err.message,draft_id:draft.id,trace_id:traceId});
+    } catch(_) { return reply.status(502).send({error:'OpenAI '+status,message:err.message,trace_id:traceId}); }
   }
 
   const log=await insertUsageLog({workspace_id:workspaceId,engine:'marketing',capability:'marketing.generate_draft',provider:'openai',model:ai.model,prompt_tokens:ai.usage.promptTokens,completion_tokens:ai.usage.completionTokens,estimated_cost_usd:ai.usage.estimatedCostUsd,latency_ms:ai.latencyMs,status:'success',trace_id:traceId});
   const draft=await insertDraft({workspace_id:workspaceId,source_content_id:contentId,draft_type:'reply',body:ai.output,ai_usage_log_id:log.id,metadata:{trace_id:traceId}});
-  await enqueue(MARKETING_QUEUES.HUMANIZE,'humanize',{workspace_id:workspaceId,draft_id:draft.id,body:ai.output,trace_id:traceId});
-  return reply.status(201).send({draft_id:draft.id,trace_id:traceId,model:ai.model,cost_usd:ai.usage.estimatedCostUsd});
+
+  // Enqueue with timeout — don't block API response
+  let queued = false;
+  try {
+    await enqueue(MARKETING_QUEUES.HUMANIZE,'humanize',{workspace_id:workspaceId,draft_id:draft.id,body:ai.output,trace_id:traceId});
+    queued = true;
+  } catch(e:any) {
+    console.error(JSON.stringify({level:'error',msg:'enqueue.failed',queue:MARKETING_QUEUES.HUMANIZE,error:e.message,trace_id:traceId}));
+  }
+
+  return reply.status(201).send({draft_id:draft.id,trace_id:traceId,model:ai.model,cost_usd:ai.usage.estimatedCostUsd,queued});
 });
 
-// ====== Collect ======
 app.post<{Body:{workspaceId:string;keyword:string;maxResults?:number}}>('/collect', async (req, reply) => {
   const {workspaceId,keyword,maxResults}=req.body;
   if(!workspaceId||!keyword) return reply.status(400).send({error:'required'});
@@ -53,7 +51,6 @@ app.post<{Body:{workspaceId:string;keyword:string;maxResults?:number}}>('/collec
   return reply.send({keyword,collected:saved.length,contents:saved});
 });
 
-// ====== Approval ======
 app.post<{Body:{workspaceId:string;draftId:string}}>('/approval/request', async (req, reply) => {
   const {workspaceId,draftId}=req.body;
   if(!workspaceId||!draftId) return reply.status(400).send({error:'required'});
@@ -75,7 +72,6 @@ app.post('/approval/callback', async (req, reply) => {
   return reply.send({text:cmd+' done'});
 });
 
-// ====== CTA ======
 app.get<{Params:{ctaId:string};Querystring:{ws?:string;ref?:string}}>('/c/:ctaId', async (req, reply) => {
   const {ctaId}=req.params, ws=req.query.ws??'unknown';
   await insertAnalyticsEvent({workspace_id:ws,event_type:'cta.clicked',subject_type:'cta',subject_id:ctaId,metadata:{ref:req.query.ref,ip:req.ip}});
