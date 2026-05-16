@@ -1,0 +1,1 @@
+{"name":"@45cm/marketing-collector","version":"0.0.1","private":true,"scripts":{"build":"tsc"},"dependencies":{"@45cm/core-shared-types":"workspace:*"},"devDependencies":{"typescript":"^5.4.0"}}
