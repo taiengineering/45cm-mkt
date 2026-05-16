@@ -82,7 +82,6 @@ export async function aiGenerate(req: AiGenerateRequest): Promise<AiGenerateResu
       latency_ms: ms, status,
       error_name: err.name, error_message: err.message,
       error_status: err.status, error_code: err.code,
-      error_type: err.type,
     }));
 
     const wrapped = new Error(`OpenAI ${status}: ${err.message}`);
@@ -111,3 +110,7 @@ export async function debugOpenAI(): Promise<{ ok: boolean; model?: string; late
     clearTimeout(timer);
   }
 }
+
+// Re-exports
+export { HUMANIZE_RULES, buildHumanizeSystemPrompt, type BrandVoiceProfile } from './humanize/rules';
+export { TAI_VOICE, NEUTRAL_VOICE, PROFESSIONAL_VOICE, getBrandVoice } from './brand-voice/profiles';
