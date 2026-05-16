@@ -1,6 +1,5 @@
 import { createWorker, MARKETING_QUEUES } from '@45cm/core-queue-runtime';
-import { aiGenerate } from '@45cm/core-ai-runtime';
-import { buildHumanizeSystemPrompt, getBrandVoice } from '@45cm/core-ai-runtime/dist/humanize/rules';
+import { aiGenerate, buildHumanizeSystemPrompt, getBrandVoice } from '@45cm/core-ai-runtime';
 import { updateDraft, insertUsageLog } from '@45cm/core-db-runtime';
 
 const w = createWorker(MARKETING_QUEUES.HUMANIZE, async (job) => {
@@ -28,7 +27,7 @@ const w = createWorker(MARKETING_QUEUES.HUMANIZE, async (job) => {
     });
 
     await updateDraft(d.draft_id, { humanized_body: ai.output, status: 'humanized' });
-    console.log(JSON.stringify({ level:'info', msg:'humanize.done', job_id:job.id, draft_id:d.draft_id, model:ai.model, latency_ms:ai.latencyMs, cost_usd:ai.usage.estimatedCostUsd, trace_id:traceId }));
+    console.log(JSON.stringify({ level:'info', msg:'humanize.done', job_id:job.id, draft_id:d.draft_id, model:ai.model, latency_ms:ai.latencyMs, trace_id:traceId }));
   } catch (err: any) {
     const status = err.status ?? 'failed';
     console.error(JSON.stringify({ level:'error', msg:'humanize.failed', job_id:job.id, draft_id:d.draft_id, status, error:err.message, trace_id:traceId }));
@@ -36,7 +35,7 @@ const w = createWorker(MARKETING_QUEUES.HUMANIZE, async (job) => {
       await updateDraft(d.draft_id, { status });
       await insertUsageLog({ workspace_id:d.workspace_id, engine:'marketing', capability:'marketing.rewrite_humanize', provider:'openai', model:'gpt-4o-mini', prompt_tokens:0, completion_tokens:0, estimated_cost_usd:0, latency_ms:0, status, trace_id:traceId });
     } catch (_) {}
-    return; // DO NOT throw — worker stays alive
+    return;
   }
 });
 
